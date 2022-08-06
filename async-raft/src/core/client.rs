@@ -5,6 +5,7 @@ use futures::future::TryFutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
+use tracing::trace;
 
 use crate::core::{LeaderState, State};
 use crate::error::{ClientReadError, ClientWriteError, RaftError, RaftResult};
@@ -251,8 +252,10 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
         // returned elsewhere after the entry has been committed to the cluster.
         let entry_arc = req.entry.clone();
         if !self.nodes.is_empty() {
+            trace!("doing commit from leader when nodes are not empty");
             self.awaiting_committed.push(req);
-            for node in self.nodes.values() {
+            for (id,node) in self.nodes.iter() {
+                trace!("replicating for node {}", id);
                 let _ = node.replstream.repltx.send(RaftEvent::Replicate {
                     entry: entry_arc.clone(),
                     commit_index: self.core.commit_index,
@@ -262,12 +265,14 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
             // Else, there are no voting nodes for replication, so the payload is now committed.
             self.core.commit_index = entry_arc.index;
             self.core.report_metrics();
+            trace!("doing commit from leader when nodes are empty");
             self.client_request_post_commit(req).await;
         }
 
         // Replicate to non-voters.
         if !self.non_voters.is_empty() {
-            for node in self.non_voters.values() {
+            for (id,node) in self.non_voters.iter() {
+                trace!("replicating for non voter node {id}");
                 let _ = node.state.replstream.repltx.send(RaftEvent::Replicate {
                     entry: entry_arc.clone(),
                     commit_index: self.core.commit_index,
@@ -315,6 +320,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
     /// Apply the given log entry to the state machine.
     #[tracing::instrument(level = "trace", skip(self, entry))]
     pub(super) async fn apply_entry_to_state_machine(&mut self, index: &u64, entry: &D) -> RaftResult<R> {
+        trace!("adding entry to sm");
         // First, we just ensure that we apply any outstanding up to, but not including, the index
         // of the given entry. We need to be able to return the data response from applying this
         // entry to the state machine.

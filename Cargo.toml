@@ -2,4 +2,5 @@
 members = [
     "async-raft",
     "memstore",
+    "demo"
 ]

@@ -1,6 +1,7 @@
 use std::io::SeekFrom;
 
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tracing::trace;
 
 use crate::core::{RaftCore, SnapshotState, State, UpdateCurrentLeader};
 use crate::error::RaftResult;
@@ -15,6 +16,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// the Raft log will only store a pointer to the snapshot file along with the index & term.
     #[tracing::instrument(level = "trace", skip(self, req))]
     pub(super) async fn handle_install_snapshot_request(&mut self, req: InstallSnapshotRequest) -> RaftResult<InstallSnapshotResponse> {
+        trace!("handle_install_snapshot_request ..{:?}", req);
         // If message's term is less than most recent term, then we do not honor the request.
         if req.term < self.current_term {
             return Ok(InstallSnapshotResponse { term: self.current_term });
@@ -60,6 +62,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     #[tracing::instrument(level = "trace", skip(self, req))]
     async fn begin_installing_snapshot(&mut self, req: InstallSnapshotRequest) -> RaftResult<InstallSnapshotResponse> {
         // Create a new snapshot and begin writing its contents.
+        trace!("being installing snapshot ..{:?}", req);
         let (id, mut snapshot) = self.storage.create_snapshot().await.map_err(|err| self.map_fatal_storage_error(err))?;
         snapshot.as_mut().write_all(&req.data).await?;
 
@@ -82,6 +85,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     async fn continue_installing_snapshot(
         &mut self, req: InstallSnapshotRequest, mut offset: u64, id: String, mut snapshot: Box<S::Snapshot>,
     ) -> RaftResult<InstallSnapshotResponse> {
+        trace!("continue_installing_snapshot ..{:?}", req);
         // Always seek to the target offset if not an exact match.
         if req.offset != offset {
             if let Err(err) = snapshot.as_mut().seek(SeekFrom::Start(req.offset)).await {
@@ -112,6 +116,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// Any errors which come up from this routine will cause the Raft node to go into shutdown.
     #[tracing::instrument(level = "trace", skip(self, req, snapshot))]
     async fn finalize_snapshot_installation(&mut self, req: InstallSnapshotRequest, id: String, mut snapshot: Box<S::Snapshot>) -> RaftResult<()> {
+        trace!("finalize_snapshot_installation ..{:?}", req);
         snapshot
             .as_mut()
             .shutdown()

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
+use tracing::trace;
 
 const ERR_INCONSISTENT_LOG: &str = "a query was received which was expecting data to be in place which does not exist in the log";
 
@@ -136,6 +137,10 @@ impl MemStore {
     pub async fn read_hard_state(&self) -> RwLockReadGuard<'_, Option<HardState>> {
         self.hs.read().await
     }
+
+    pub async fn get_state_machine_for_read(&self) -> RwLockReadGuard<'_, MemStoreStateMachine> {
+        self.sm.read().await
+    }
 }
 
 #[async_trait]
@@ -225,8 +230,10 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
 
     #[tracing::instrument(level = "trace", skip(self, entry))]
     async fn append_entry_to_log(&self, entry: &Entry<ClientRequest>) -> Result<()> {
+        trace!("append entry to log");
         let mut log = self.log.write().await;
         log.insert(entry.index, entry.clone());
+        trace!("log after appending entry {:?}", log);
         Ok(())
     }
 
@@ -241,6 +248,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
 
     #[tracing::instrument(level = "trace", skip(self, data))]
     async fn apply_entry_to_state_machine(&self, index: &u64, data: &ClientRequest) -> Result<ClientResponse> {
+        trace!(index = index, "adding entry to sm {:?}", data);
         let mut sm = self.sm.write().await;
         sm.last_applied_log = *index;
         if let Some((serial, res)) = sm.client_serial_responses.get(&data.client) {
@@ -275,9 +283,13 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         {
             // Serialize the data of the state machine.
             let sm = self.sm.read().await;
+            trace!("snapshot state machine data {:?}", sm);
             data = serde_json::to_vec(&*sm)?;
             last_applied_log = sm.last_applied_log;
+            trace!("snapshot last_applied_log {}", last_applied_log);
         } // Release state machine read lock.
+
+
 
         let membership_config;
         {
@@ -294,6 +306,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
                 .unwrap_or_else(|| MembershipConfig::new_initial(self.id));
         } // Release log read lock.
 
+        trace!("snapshot membership_config {:?}", membership_config);
         let snapshot_bytes: Vec<u8>;
         let term;
         {

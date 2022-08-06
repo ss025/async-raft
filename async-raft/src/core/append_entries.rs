@@ -1,3 +1,4 @@
+use tracing::trace;
 use crate::core::{RaftCore, State, UpdateCurrentLeader};
 use crate::error::RaftResult;
 use crate::raft::{AppendEntriesRequest, AppendEntriesResponse, ConflictOpt, Entry, EntryPayload};
@@ -12,6 +13,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
         fields(term=msg.term, leader_id=msg.leader_id, prev_log_index=msg.prev_log_index, prev_log_term=msg.prev_log_term, leader_commit=msg.leader_commit),
     )]
     pub(super) async fn handle_append_entries_request(&mut self, msg: AppendEntriesRequest<D>) -> RaftResult<AppendEntriesResponse> {
+        trace!("handle_append_entries_request for role {:?} ", self.target_state);
         // If message's term is less than most recent term, then we do not honor the request.
         if msg.term < self.current_term {
             tracing::trace!({self.current_term, rpc_term=msg.term}, "AppendEntries RPC term is less than current term");

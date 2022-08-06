@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
+use tracing::{info, trace};
 
 use crate::config::Config;
 use crate::core::RaftCore;
@@ -169,6 +170,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// being built on top of Raft.
     #[tracing::instrument(level = "debug", skip(self, rpc))]
     pub async fn client_write(&self, rpc: ClientWriteRequest<D>) -> Result<ClientWriteResponse<R>, ClientWriteError<D>> {
+        trace!(" client write --> raft.rs  pub fn new(id: NodeId,...) ---> RaftCore::spawn --> core/mod.rs --> LeaderState::new() ");
         let (tx, rx) = oneshot::channel();
         self.inner
             .tx_api
@@ -235,6 +237,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// If this Raft node is not the cluster leader, then this call will fail.
     #[tracing::instrument(level = "debug", skip(self))]
     pub async fn add_non_voter(&self, id: NodeId) -> Result<(), ChangeConfigError> {
+        info!("adding non voter");
         let (tx, rx) = oneshot::channel();
         self.inner
             .tx_api

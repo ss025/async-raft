@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use futures::future::{FutureExt, TryFutureExt};
 use tokio::sync::oneshot;
+use tracing::info;
 
 use crate::core::client::ClientRequestEntry;
 use crate::core::{ConsensusState, LeaderState, NonVoterReplicationState, NonVoterState, State, UpdateCurrentLeader};
@@ -52,6 +53,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
     /// on the given channel.
     #[tracing::instrument(level = "trace", skip(self, tx))]
     pub(super) fn add_member(&mut self, target: NodeId, tx: oneshot::Sender<Result<(), ChangeConfigError>>) {
+        info!("adding new member");
         // Ensure the node doesn't already exist in the current config, in the set of new nodes
         // alreading being synced, or in the nodes being removed.
         if self.core.membership.members.contains(&target)
@@ -80,6 +82,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
                 tx: Some(tx),
             },
         );
+        info!("inserted node in none voters");
     }
 
     #[tracing::instrument(level = "trace", skip(self, tx))]

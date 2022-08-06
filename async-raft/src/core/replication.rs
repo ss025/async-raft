@@ -1,4 +1,5 @@
 use tokio::sync::oneshot;
+use tracing::{debug, trace};
 
 use crate::config::SnapshotPolicy;
 use crate::core::{ConsensusState, LeaderState, ReplicationState, SnapshotState, State, UpdateCurrentLeader};
@@ -11,6 +12,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
     /// Spawn a new replication stream returning its replication state handle.
     #[tracing::instrument(level = "trace", skip(self))]
     pub(super) fn spawn_replication_stream(&self, target: NodeId) -> ReplicationState<D> {
+        trace!("spawning replication stream ");
         let replstream = ReplicationStream::new(
             self.core.id,
             target,
@@ -36,15 +38,28 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
     #[tracing::instrument(level = "trace", skip(self, event))]
     pub(super) async fn handle_replica_event(&mut self, event: ReplicaEvent<S::Snapshot>) {
         let res = match event {
-            ReplicaEvent::RateUpdate { target, is_line_rate } => self.handle_rate_update(target, is_line_rate).await,
-            ReplicaEvent::RevertToFollower { target, term } => self.handle_revert_to_follower(target, term).await,
+            ReplicaEvent::RateUpdate { target, is_line_rate } =>{
+                debug!("handling RateUpdate replica event for target {}, is_line_rate = {}", target, is_line_rate);
+                self.handle_rate_update(target, is_line_rate).await
+            },
+            ReplicaEvent::RevertToFollower { target, term } => {
+                debug!("handling RevertToFollower event for target {}", target);
+                self.handle_revert_to_follower(target, term).await
+            },
             ReplicaEvent::UpdateMatchIndex {
                 target,
                 match_index,
                 match_term,
-            } => self.handle_update_match_index(target, match_index, match_term).await,
-            ReplicaEvent::NeedsSnapshot { target, tx } => self.handle_needs_snapshot(target, tx).await,
+            } => {
+                debug!("handling UpdateMatchIndex event for target {}", target);
+                self.handle_update_match_index(target, match_index, match_term).await
+            },
+            ReplicaEvent::NeedsSnapshot { target, tx } => {
+                debug!("handling NeedsSnapshot event for target {}", target);
+                self.handle_needs_snapshot(target, tx).await
+            },
             ReplicaEvent::Shutdown => {
+                debug!("handling Shutdown event ");
                 self.core.set_target_state(State::Shutdown);
                 return;
             }
@@ -188,6 +203,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
             if let Some(offset) = filter {
                 // Build a new ApplyLogsTask from each of the given client requests.
                 for request in self.awaiting_committed.drain(..=offset).collect::<Vec<_>>() {
+                    trace!("Build a new ApplyLogsTask {:?}", request.entry);
                     self.client_request_post_commit(request).await;
                 }
             }
@@ -203,6 +219,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
         let threshold = match &self.core.config.snapshot_policy {
             SnapshotPolicy::LogsSinceLast(threshold) => *threshold,
         };
+        trace!("threshold {}",threshold);
 
         // Check for existence of current snapshot.
         let current_snapshot_opt = self
@@ -211,11 +228,13 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
             .get_current_snapshot()
             .await
             .map_err(|err| self.core.map_fatal_storage_error(err))?;
+
         if let Some(snapshot) = current_snapshot_opt {
             // If snapshot exists, ensure its distance from the leader's last log index is <= half
             // of the configured snapshot threshold, else create a new snapshot.
             if snapshot_is_within_half_of_threshold(&snapshot.index, &self.core.last_log_index, &threshold) {
                 let _ = tx.send(snapshot);
+                trace!("returning current_snapshot_opt");
                 return Ok(());
             }
         }
@@ -225,12 +244,14 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
         // will wait for the completion and will then send anothe request to fetch the finished snapshot.
         // Else we just drop any other state and continue. Leaders never enter `Streaming` state.
         if let Some(SnapshotState::Snapshotting { handle, sender }) = self.core.snapshot_state.take() {
+            trace!("waiting for snapshot to finish");
             let mut chan = sender.subscribe();
             tokio::spawn(async move {
                 let _ = chan.recv().await;
                 drop(tx);
             });
             self.core.snapshot_state = Some(SnapshotState::Snapshotting { handle, sender });
+            trace!("returning new snapshot");
             return Ok(());
         }
 

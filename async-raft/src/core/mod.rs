@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, Duration, Instant};
+use tracing::trace;
 use tracing_futures::Instrument;
 
 use crate::config::{Config, SnapshotPolicy};
@@ -588,6 +589,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
     /// Transition to the Raft leader state.
     #[tracing::instrument(level="trace", skip(self), fields(id=self.core.id, raft_state="leader"))]
     pub(self) async fn run(mut self) -> RaftResult<()> {
+        trace!("starting leader node");
         // Spawn replication streams.
         let targets = self
             .core
@@ -623,6 +625,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
             tokio::select! {
                 Some(msg) = self.core.rx_api.recv() => match msg {
                     RaftMsg::AppendEntries{rpc, tx} => {
+                        trace!("append entries in leader ");
                         let _ = tx.send(self.core.handle_append_entries_request(rpc).await);
                     }
                     RaftMsg::RequestVote{rpc, tx} => {
