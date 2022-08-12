@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -10,7 +13,7 @@ use tracing::{info, trace};
 
 use async_raft::{NodeId, RaftMetrics};
 use async_raft::raft::{AppendEntriesRequest, AppendEntriesResponse, ClientWriteRequest, ClientWriteResponse, InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse};
-use memstore::{ClientRequest, ClientResponse};
+use persiststore::{ClientRequest, ClientResponse};
 
 use crate::{DemoAppData, PEERS};
 
@@ -35,14 +38,13 @@ impl Display for DemoError {
 impl ResponseError for DemoError {}
 
 
-
 #[post("/append_entries")]
 pub async fn append_entries(state: web::Data<DemoAppData>, request: web::Json<AppendEntriesRequest<ClientRequest>>) -> actix_web::Result<web::Json<AppendEntriesResponse>> {
     println!("append_entries with requests {request:?}");
     let request = request.into_inner();
-    /* if request.entries.len() != 0 {
-         println!("append_entries with request {request:?}");
-     }*/
+   /* if request.entries.len() != 0 {
+        println!("append_entries with request {request:?}");
+    }*/
     let resp = state.raft
         .append_entries(request).await
         .map_err(|e| DemoError { inner: e.into() });
@@ -65,6 +67,7 @@ pub async fn install_snapshot(state: web::Data<DemoAppData>, request: web::Json<
 
     Ok(web::Json(resp?))
 }
+
 #[post("/vote")]
 pub async fn vote(state: web::Data<DemoAppData>, request: web::Json<VoteRequest>) -> actix_web::Result<web::Json<VoteResponse>> {
     println!("vote with request {request:?}");
@@ -156,7 +159,7 @@ pub async fn write(state: web::Data<DemoAppData>, request: web::Json<ClientReque
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 pub struct GetResponse {
-    client_id: String,
+    client: String,
     response: Option<(u64, Option<String>)>,
     status: Option<String>,
 }
@@ -174,7 +177,7 @@ pub enum ReadRespStatus { Success, ForwardToLeader }
 pub struct ReadResponse {
     status: ReadRespStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<GetResponse>,
+    data: Option<ClientRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     forward: Option<ForwardToLeaderMeta>,
 
@@ -216,15 +219,10 @@ pub async fn read(state: web::Data<DemoAppData>, client_id: web::Path<String>, q
 
 
     let client_id = client_id.into_inner();
-    let guard = state.store.get_state_machine_for_read().await;
-    let status = guard.client_status.get(&client_id).cloned();
-    let response = guard.client_serial_responses.get(&client_id).cloned();
-    let resp = GetResponse {
-        client_id,
-        response,
-        status,
-    };
+    let state_machine = state.store.state_machine();
+    let status = state_machine.get(client_id.as_bytes());
+    let response = status.map(|v| serde_json::from_slice::<ClientRequest>(&v).unwrap());
 
-    Ok(Json(ReadResponse { status: ReadRespStatus::Success, data: Some(resp), forward: None }))
+    Ok(Json(ReadResponse { status: ReadRespStatus::Success, data: response, forward: None }))
 }
 

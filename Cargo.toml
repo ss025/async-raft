@@ -2,5 +2,7 @@
 members = [
     "async-raft",
     "memstore",
-    "demo"
+    "persiststore",
+    "demo",
+    "persist_demo"
 ]

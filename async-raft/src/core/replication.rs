@@ -51,7 +51,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
                 match_index,
                 match_term,
             } => {
-                debug!("handling UpdateMatchIndex event for target {}", target);
+                //debug!({target, match_index, match_term},"handling UpdateMatchIndex event for target {}", target);
                 self.handle_update_match_index(target, match_index, match_term).await
             },
             ReplicaEvent::NeedsSnapshot { target, tx } => {
@@ -81,6 +81,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
         if let Some(state) = self.non_voters.get_mut(&target) {
             state.state.is_at_line_rate = is_line_rate;
             state.is_ready_to_join = is_line_rate;
+            //trace!("handling handle_rate_update for non voter");
             // Issue a response on the non-voters response channel if needed.
             if state.is_ready_to_join {
                 if let Some(tx) = state.tx.take() {
@@ -203,7 +204,7 @@ impl<'a, D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>
             if let Some(offset) = filter {
                 // Build a new ApplyLogsTask from each of the given client requests.
                 for request in self.awaiting_committed.drain(..=offset).collect::<Vec<_>>() {
-                    trace!("Build a new ApplyLogsTask {:?}", request.entry);
+                    debug!("Build a new ApplyLogsTask {:?}", request.entry);
                     self.client_request_post_commit(request).await;
                 }
             }

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tokio::sync::{RwLockReadGuard, RwLockWriteGuard};
-use tracing::trace;
+use tracing::{debug, trace};
 
 const ERR_INCONSISTENT_LOG: &str = "a query was received which was expecting data to be in place which does not exist in the log";
 
@@ -199,6 +199,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
 
     #[tracing::instrument(level = "trace", skip(self))]
     async fn get_log_entries(&self, start: u64, stop: u64) -> Result<Vec<Entry<ClientRequest>>> {
+        trace!("reading log entries");
         // Invalid request, return empty vec.
         if start > stop {
             tracing::error!("invalid request, start > stop");
@@ -241,6 +242,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
     async fn replicate_to_log(&self, entries: &[Entry<ClientRequest>]) -> Result<()> {
         let mut log = self.log.write().await;
         for entry in entries {
+            debug!("adding entry to log {:?}", entry);
             log.insert(entry.index, entry.clone());
         }
         Ok(())
@@ -248,7 +250,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
 
     #[tracing::instrument(level = "trace", skip(self, data))]
     async fn apply_entry_to_state_machine(&self, index: &u64, data: &ClientRequest) -> Result<ClientResponse> {
-        trace!(index = index, "adding entry to sm {:?}", data);
+        debug!("apply entry {data:?} to sm  with index {index}");
         let mut sm = self.sm.write().await;
         sm.last_applied_log = *index;
         if let Some((serial, res)) = sm.client_serial_responses.get(&data.client) {
@@ -264,26 +266,28 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
     #[tracing::instrument(level = "trace", skip(self, entries))]
     async fn replicate_to_state_machine(&self, entries: &[(&u64, &ClientRequest)]) -> Result<()> {
         let mut sm = self.sm.write().await;
-        for (index, data) in entries {
+        for (index, e) in entries {
+            debug!("replicate entry {e:?} to sm  with index {index}");
             sm.last_applied_log = **index;
-            if let Some((serial, _)) = sm.client_serial_responses.get(&data.client) {
-                if serial == &data.serial {
+            if let Some((serial, _)) = sm.client_serial_responses.get(&e.client) {
+                if serial == &e.serial {
                     continue;
                 }
             }
-            let previous = sm.client_status.insert(data.client.clone(), data.status.clone());
-            sm.client_serial_responses.insert(data.client.clone(), (data.serial, previous.clone()));
+            let previous = sm.client_status.insert(e.client.clone(), e.status.clone());
+            sm.client_serial_responses.insert(e.client.clone(), (e.serial, previous.clone()));
         }
         Ok(())
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
     async fn do_log_compaction(&self) -> Result<CurrentSnapshotData<Self::Snapshot>> {
+        debug!("ss here 0 ");
         let (data, last_applied_log);
         {
             // Serialize the data of the state machine.
             let sm = self.sm.read().await;
-            trace!("snapshot state machine data {:?}", sm);
+           // trace!("snapshot state machine data {:?}", sm);
             data = serde_json::to_vec(&*sm)?;
             last_applied_log = sm.last_applied_log;
             trace!("snapshot last_applied_log {}", last_applied_log);
@@ -301,7 +305,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
                 .skip_while(|entry| entry.index > last_applied_log)
                 .find_map(|entry| match &entry.payload {
                     EntryPayload::ConfigChange(cfg) => Some(cfg.membership.clone()),
-                    _ => None,
+                    _ => None, // Todo: sohan :: is this not a bug ?? what  if no cfg change entry founnd but snapshot pointer is found ?? this need to be checked
                 })
                 .unwrap_or_else(|| MembershipConfig::new_initial(self.id));
         } // Release log read lock.
@@ -311,6 +315,7 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         let term;
         {
             let mut log = self.log.write().await;
+            trace!("size of log {}", log.len());
             let mut current_snapshot = self.current_snapshot.write().await;
             term = log
                 .get(&last_applied_log)
@@ -343,16 +348,18 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
 
     #[tracing::instrument(level = "trace", skip(self))]
     async fn create_snapshot(&self) -> Result<(String, Box<Self::Snapshot>)> {
+        //debug!("ss here 1 ");
         Ok((String::from(""), Box::new(Cursor::new(Vec::new())))) // Snapshot IDs are insignificant to this storage engine.
     }
 
-    #[tracing::instrument(level = "trace", skip(self, snapshot))]
+    #[tracing::instrument(level = "debug", skip(self, snapshot))]
     async fn finalize_snapshot_installation(
         &self, index: u64, term: u64, delete_through: Option<u64>, id: String, snapshot: Box<Self::Snapshot>,
     ) -> Result<()> {
+        debug!("finalize_snapshot_installation");
         tracing::trace!({ snapshot_size = snapshot.get_ref().len() }, "decoding snapshot for installation");
-        let raw = serde_json::to_string_pretty(snapshot.get_ref().as_slice())?;
-        println!("JSON SNAP:\n{}", raw);
+       // let raw = serde_json::to_string_pretty(snapshot.get_ref().as_slice())?;
+       // println!("JSON SNAP:\n{}", raw);
         let new_snapshot: MemStoreSnapshot = serde_json::from_slice(snapshot.get_ref().as_slice())?;
         // Update log.
         {
@@ -390,8 +397,9 @@ impl RaftStorage<ClientRequest, ClientResponse> for MemStore {
         Ok(())
     }
 
-    #[tracing::instrument(level = "trace", skip(self))]
+    #[tracing::instrument(level = "debug", skip(self))]
     async fn get_current_snapshot(&self) -> Result<Option<CurrentSnapshotData<Self::Snapshot>>> {
+        debug!("getting current snapshot");
         match &*self.current_snapshot.read().await {
             Some(snapshot) => {
                 let reader = serde_json::to_vec(&snapshot)?;

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{sleep_until, Duration, Instant};
-use tracing::trace;
+use tracing::{debug, trace};
 use tracing_futures::Instrument;
 
 use crate::config::{Config, SnapshotPolicy};
@@ -161,8 +161,9 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// The main loop of the Raft protocol.
     #[tracing::instrument(level="trace", skip(self), fields(id=self.id, cluster=%self.config.cluster_name))]
     async fn main(mut self) -> RaftResult<()> {
-        tracing::trace!("raft node is initializing");
+        tracing::trace!("raft node is initializing in RaftCore and reading initial state");
         let state = self.storage.get_initial_state().await.map_err(|err| self.map_fatal_storage_error(err))?;
+        tracing::trace!("got initial state {:?}", state);
         self.last_log_index = state.last_log_index;
         self.last_log_term = state.last_log_term;
         self.current_term = state.hard_state.current_term;
@@ -359,6 +360,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
     /// Trigger a log compaction (snapshot) job if needed.
     #[tracing::instrument(level = "trace", skip(self))]
     pub(self) fn trigger_log_compaction_if_needed(&mut self) {
+       // debug!("snapshot state is present {}", self.snapshot_state.is_some());
         if self.snapshot_state.is_some() {
             return;
         }

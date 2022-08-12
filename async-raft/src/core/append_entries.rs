@@ -79,7 +79,7 @@ impl<D: AppData, R: AppDataResponse, N: RaftNetwork<D>, S: RaftStorage<D, R>> Ra
 
         /////////////////////////////////////
         //// Begin Log Consistency Check ////
-        tracing::trace!("begin log consistency check");
+        tracing::debug!("begin log consistency check");
 
         // Previous log info doesn't immediately line up, so perform log consistency check and proceed based on its result.
         let entries = self
